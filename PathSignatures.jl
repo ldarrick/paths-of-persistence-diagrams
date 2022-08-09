@@ -155,70 +155,7 @@ end
 
 
 ###############################################################################
-# Function: kernel_submatrix
-# Description: Computes the kernel matrix for a batch of data using the specified
-#   kernel function. If only a submatrix is required, the row indices and column
-#   indices can be specified.
-# Input 
-#   X: a batch of data in one of two forms:
-#       (1) (T+1, N)-array, where columns represent the point at time t
-#       (2) (T+1)-array of objects, where each column represents the object at time t
-#   kernelFunc: a kernel function taking two inputs of the same type as the data in X
-#   rowInd: the row of the kernel matrix to be computed
-#   colInd: the columns of the kernel matrix to be computed
-# Output 
-#   K: kernel matrix
-###############################################################################
-function kernel_submatrix(X, kernelFunc, rowInd, colInd)
-
-    if ndims(X) > 1
-        nestedfeatures = false
-    else
-        nestedfeatures = true
-    end
-
-    nr = length(rowInd)
-    nc = length(colInd)
-
-    K = zeros(nr, nc)
-
-    rc_intersect = intersect(rowInd, colInd)
-
-    for i = 1:nr
-        for j = 1:nc
-
-            RI = rowInd[i]
-            CI = colInd[j]
-
-
-            fRI = findfirst(RI .== colInd)
-            fCI = findfirst(CI .== rowInd)
-
-
-            if !isnothing(fRI) && !isnothing(fCI) && (RI > CI)
-                continue
-            end
-
-            if nestedfeatures
-                K[i,j] = kernelFunc(X[RI], X[CI])
-            else
-                K[i,j] = kernelFunc(X[RI,:], X[CI,:])
-            end
-
-            if !isnothing(fRI) && !isnothing(fCI) && (RI < CI)
-                K[fCI,fRI] = K[i,j]
-            end
-
-        end
-    end
-
-    return K
-
-end
-
-
-###############################################################################
-## DISCRETE DERIVATIVE FUNCTIONS ##############################################
+## MAIN FUNCTIONS #############################################################
 ###############################################################################
 
 ###############################################################################
@@ -297,75 +234,6 @@ function discrete_derivative(P, dtype)
 end
 
 
-
-###############################################################################
-# Function: kernel_derivative
-# Description: Computes Gram matrices for the discrete derivatives of two paths
-#   using a kernel function, used in the signature kernel computation when
-#   composed with an initial kernel
-# Input 
-#   P1, P2: time series, either in the form of:
-#       (1) (T+1, N)-array, where columns represent the point at time t
-#       (2) (T+1)-array of objects, where each column represents the object at time t
-#           - each object can be of any type
-#           - used when objects don't have a fixed-size representation such as persistence diagrams
-#   kernel: a function kernel(a,b) with two inputs
-#       - the types of the inputs are the same
-#       - the types must correspond with the form of the time series:
-#           (1) type must be a length N vector
-#           (2) type must be the type of the object in P
-# Output 
-#   DK1: the Gram matrix for the discrete derivative of P1
-#   DK2: the Gram matrix for the discrete derivative of P1
-#   DK12: the Gram matrix between the discrete derivative of P1 and the discrete derivative of P2
-###############################################################################
-function kernel_derivative(P1, P2, kernel::Function)
-
-    T1 = size(P1,1)
-    T2 = size(P2,1)
-
-    Kfull = kernel_submatrix(vcat(P1, P2), kernel, 1:(T1+T2), 1:(T1+T2))
-
-    K1 = Kfull[1:T1, 1:T1]
-    K2 = Kfull[T1+1:end,T1+1:end]
-    K12 = Kfull[1:T1, T1+1:end]
-
-    DK1 = zeros(T1-1, T1-1)
-    DK2 = zeros(T2-1, T2-1)
-    DK12 = zeros(T1-1, T2-1)
-
-    for i = 1:T1-1
-        for j = 1:T1-1
-            if i==j
-                DK1[i,j] = K1[i+1, j+1] - K1[i+1, j] - K1[i, j+1] + K1[i,j]
-            else
-                DK1[i,j] = K1[i+1, j+1] - K1[i+1, j] - K1[i, j+1] + K1[i,j]
-                DK1[j,i] = DK1[i,j]
-            end
-        end
-    end
-
-    for i = 1:T2-1
-        for j = 1:T2-1
-            if i==j
-                DK2[i,j] = K2[i+1, j+1] - K2[i+1, j] - K2[i, j+1] + K2[i,j]
-            else
-                DK2[i,j] = K2[i+1, j+1] - K2[i+1, j] - K2[i, j+1] + K2[i,j]
-                DK2[j,i] = DK2[i,j]
-            end
-        end
-    end
-
-    for i = 1:T1-1
-        for j = 1:T2-1
-            DK12[i,j] = K12[i+1, j+1] - K12[i+1,j] - K12[i,j+1] + K12[i,j]
-        end
-    end
-
-    return DK1, DK2, DK12
-end
-
-
 #############################################################################
 # Function: batch_discrete_derivative 
 # Description: Batch discrete derivative computation
@@ -390,9 +258,6 @@ function batch_discrete_derivative(BP, dtype)
 	return bp
 end
 
-###############################################################################
-## SIGNATURE FUNCTIONS ########################################################
-###############################################################################
 
 ###############################################################################
 # Function: signature 
@@ -523,11 +388,6 @@ end
 
 
 ###############################################################################
-## SIGNATURE KERNEL FUNCTIONS #################################################
-###############################################################################
-
-
-###############################################################################
 # Function: dsignature_kernel (dtype is string)
 # Description: Computes the normalized discrete signature kernel for two paths. 
 # Input 
@@ -551,54 +411,163 @@ end
 
 ###############################################################################
 # Function: dsignature_kernel (dtype is function)
-# Description: Computes the normalized discrete signature kernel for two paths,
-#   with respect to the specified initial kernel.
+# Description: Computes the normalized discrete signature kernel for two paths.
+# The inputted function is assumed to be a kernel function for the corresponding
+# input data. 
 # Input 
 #   P1, P2: two time series
 #   M: truncation level
-#   dtype: initial kernel for data
+#   dtype: type of time series
 # Output 
 #   K: kernel value
 ###############################################################################
-function dsignature_kernel(P1, P2, M, dtype::Function)
+function dsignature_kernel(P1, P2, M, dtype::Function, lr=-1)
 
-    DK1, DK2, DK12 = kernel_derivative(P1, P2, dtype)
+    DK1, DK2, DK12 = kernel_derivative(P1, P2, dtype, lr)
 
     return dsignature_kernel_gram(DK1, DK2, DK12, M)
 end
 
 ###############################################################################
-# Function: dsignature_kernel_gram
-# Description: Computes the normalized discrete signature kernel for two paths,
-#   where all derivative gram matrices are precomputed
-# Input
-#   K1, K2: derivative Gram matrix for the two paths
-#   K12: derivative Gram matrix between paths 1 and 2 
-#   M: truncation level
-# Output 
-#   K: signature kernel
 ###############################################################################
-function dsignature_kernel_gram(DK1, DK2, DK12, M)
+###############################################################################
 
-    lambda1 = tensor_normalization_computation(DK1, M)
-    lambda2 = tensor_normalization_computation(DK2, M)
+function kernel_derivative(P1, P2, kernel::Function, lr=-1)
 
-    K = dsignature_kernel_computation(DK12, lambda1, lambda2, M)
+    T1 = size(P1,1)
+    T2 = size(P2,1)
 
-    return K
+    if lr > 0
+        Kfull = nystrom(vcat(P1,P2), lr, kernel)
+        # Kfull = U*V'
+    else
+        Kfull = kernel_submatrix(vcat(P1, P2), kernel, 1:(T1+T2), 1:(T1+T2))
+    end
+
+    K1 = Kfull[1:T1, 1:T1]
+    K2 = Kfull[T1+1:end,T1+1:end]
+    K12 = Kfull[1:T1, T1+1:end]
+
+    DK1 = zeros(T1-1, T1-1)
+    DK2 = zeros(T2-1, T2-1)
+    DK12 = zeros(T1-1, T2-1)
+
+    for i = 1:T1-1
+        for j = 1:T1-1
+            if i==j
+                DK1[i,j] = K1[i+1, j+1] - K1[i+1, j] - K1[i, j+1] + K1[i,j]
+            else
+                DK1[i,j] = K1[i+1, j+1] - K1[i+1, j] - K1[i, j+1] + K1[i,j]
+                DK1[j,i] = DK1[i,j]
+            end
+        end
+    end
+
+    for i = 1:T2-1
+        for j = 1:T2-1
+            if i==j
+                DK2[i,j] = K2[i+1, j+1] - K2[i+1, j] - K2[i, j+1] + K2[i,j]
+            else
+                DK2[i,j] = K2[i+1, j+1] - K2[i+1, j] - K2[i, j+1] + K2[i,j]
+                DK2[j,i] = DK2[i,j]
+            end
+        end
+    end
+
+    for i = 1:T1-1
+        for j = 1:T2-1
+            DK12[i,j] = K12[i+1, j+1] - K12[i+1,j] - K12[i,j+1] + K12[i,j]
+        end
+    end
+
+    return DK1, DK2, DK12
 end
 
+###############################################################################
+###############################################################################
+###############################################################################
+
+# function dsignature_kernel_lr(DK1, DK2, DK12, M, r)
+function dsignature_kernel_lr(P1, P2, M, kernelFunc, r)
+
+    n1 = size(P1,1)-1
+    n2 = size(P2,1)-1
+
+    # Compute full low rank approximation
+    P = vcat(P1, P2)
+    U, V = nystrom(P, r, kernelFunc)
+
+    dU = U[2:end,:] - U[1:end-1,:]
+    dV = V[2:end,:] - V[1:end-1,:]
+
+    # Separate approximation into parts
+    dU1 = dU[1:n1,:]
+    dV1 = dV[1:n1,:]
+
+    dU2 = dU[n1+2:end,:]
+    dV2 = dV[n1+2:end,:]
+
+    dU12 = dU1
+    dV12 = dV2
+
+    lambda1 = lr_tensor_normalization_computation(dU1, dV1, M)
+    lambda2 = lr_tensor_normalization_computation(dU2, dV2, M)
+
+    K = dsignature_kernel_lr_computation(dU12, dV12, lambda1, lambda2, M)
+
+    return K
+
+end
 
 ###############################################################################
-# Function: tensor_normalization_computation
-# Description: Computes the normalization constant for the signature using the
-#   derivative Gram matrix.
-# Input 
-#   dK: derivative Gram matrix for a path
-#   M: truncation level
-# Output 
-#   lambda: normalization constant for the underlying path
 ###############################################################################
+###############################################################################
+
+function lr_tensor_normalization_computation(dU, dV, M)
+    n1 = size(dU, 1)
+    n2 = size(dV, 1)
+
+    cumcoeff = zeros(M+1)
+
+    B = dU
+    C = dV
+
+    P = deepcopy(B)
+    Q = deepcopy(C)
+
+    R = sum(P,dims=1)
+    S = sum(Q,dims=1)
+
+    cumcoeff[2] = sum(R.*S)
+
+    for d = 2:M
+        cumsum!(P,P,dims=1)
+        cumsum!(Q,Q,dims=1)
+
+        P = hcat(P,ones(n1))
+        Q = hcat(Q,ones(n2))
+
+        P = starprod(dU, P)
+        Q = starprod(dV, Q)
+
+        R = sum(P,dims=1)
+        S = sum(Q,dims=1)
+
+        cumcoeff[d+1] = sum(R.*S)
+    end
+
+    tnorm = cumcoeff[end] + 1
+    coeff = cumcoeff[2:end] - cumcoeff[1:end-1]
+    f(x) = sum(coeff.*(x.^((1:M)*2))) + 1 - PHI(sqrt(tnorm),4.,1.)
+    lambda = find_zero(f, (0., max(2.,tnorm)))
+
+    return lambda
+end
+
+###############################################################################
+###############################################################################
+###############################################################################
+
 function tensor_normalization_computation(dK, M)
     # Compute the tensor normalization
     cumcoeff = zeros(M+1)
@@ -624,16 +593,9 @@ function tensor_normalization_computation(dK, M)
 end
 
 ###############################################################################
-# Function: dsignature_kernel_computation
-# Description: Computes the discrete signature kernel given the derivative Gram
-#   matrix between two paths, and the normalizatin constants for each path.
-# Input 
-#   dK: derivative Gram matrix for a path
-#   lambda1, lambda2: normalization constants for the two underlying paths
-#   M: truncation level
-# Output 
-#   K: signature kernel
 ###############################################################################
+###############################################################################
+
 function dsignature_kernel_computation(dK, lambda1, lambda2, M)
     
     ll = lambda1*lambda2
@@ -652,21 +614,176 @@ end
 
 
 ###############################################################################
-# Function: dsignature_kernel_matrix
-# Description: Computes the signature kernel matrix for two batches of time series, using
+###############################################################################
+###############################################################################
+
+function dsignature_kernel_lr_computation(dU, dV, lambda1, lambda2, M)
+    n1 = size(dU, 1)
+    n2 = size(dV, 1)
+
+    ll = lambda1*lambda2
+
+    # B = dU*lambda1
+    # C = dV*lambda2
+
+    B = dU*sqrt(ll)
+    C = dV*sqrt(ll)
+
+    P = deepcopy(B)
+    Q = deepcopy(C)
+
+    for d = 2:M
+        cumsum!(P,P,dims=1)
+        cumsum!(Q,Q,dims=1)
+
+        P = hcat(P,ones(n1))
+        Q = hcat(Q,ones(n2))
+
+        P = starprod(B, P)
+        Q = starprod(C, Q)
+    end
+    R = sum(P,dims=1)
+    S = sum(Q,dims=1)
+
+    return 1 + sum(R.*S)
+end
+
+###############################################################################
+###############################################################################
+###############################################################################
+
+function starprod(A, B)
+
+    na, ma = size(A)
+    nb, mb = size(B)
+
+    if na != nb
+        error("Matrix sizes are incompatible")
+    end
+
+    M = ma*mb
+
+    C = zeros(na, M)
+
+    for i = 1:na
+        for j1 = 1:ma
+            for j2 = 1:mb
+
+                C[i, (j1-1)*mb + j2] = A[i,j1]*B[i,j2]
+            end
+        end
+    end
+
+    return C
+
+end
+
+###############################################################################
+# Function: dsignature_kernel_gram
+# Description: Computes the normalized discrete signature kernel for two paths,
+#	where all gram matrices are precomputed
+# Input
+#   K1: Gram matrix for path 1
+#   K2: Gram matrix for path 2
+#   K12: Mixed Gram matrix for path 1 and 2 
+#	p1, p2: discrete derivatives for two time series
+#	M: truncation level
+# Output 
+#	K: kernel value
+###############################################################################
+function dsignature_kernel_gram(DK1, DK2, DK12, M)
+
+    lambda1 = tensor_normalization_computation(DK1, M)
+    lambda2 = tensor_normalization_computation(DK2, M)
+
+    K = dsignature_kernel_computation(DK12, lambda1, lambda2, M)
+
+    return K
+end
+
+
+###############################################################################
+# Function: dsignature_gram_matrix
+# Description: Computes the gram matrix for two batches of time series, using
+#	the normalized discrete signature kernel. 
+# Input 
+#	BP1, BP2: two batches of time series
+#	M: truncation level
+#	dtype: type of time series
+# Output 
+#	K: gram matrix
+###############################################################################
+function dsignature_kernel_matrix(BP1, BP2, M, dtype::String, mt=false)
+
+    # If BP2 is empty, then we are computing the gram matrix for BP1
+
+	# Compute all discrete derivatives
+    bp1 = batch_discrete_derivative(BP1, dtype)
+    S1 = length(bp1)
+
+    if !isempty(BP2)
+        bp2 = batch_discrete_derivative(BP2, dtype)
+        S2 = length(bp2)
+        K = zeros(S1, S2)
+    else
+        K = zeros(S1, S1)
+        S2 = S1
+        bp2 = bp1
+    end
+
+    if mt 
+        Threads.@threads for i = 1:S1
+            for j = 1:S2
+                if isempty(BP2) && i < j
+                    continue
+                end
+    
+                DK1 = bp1[i]*bp1[i]'
+                DK2 = bp2[j]*bp2[j]'
+                DK12 = bp1[i]*bp2[j]'
+    
+                K[i,j] = dsignature_kernel_gram(DK1, DK2, DK12, M)
+    
+                if isempty(BP2)
+                    K[j,i] = K[i,j]
+                end
+            end
+        end
+    else
+        for i = 1:S1
+            for j = 1:S2
+                if isempty(BP2) && i < j
+                    continue
+                end
+
+                DK1 = bp1[i]*bp1[i]'
+                DK2 = bp2[j]*bp2[j]'
+                DK12 = bp1[i]*bp2[j]'
+
+                K[i,j] = dsignature_kernel_gram(DK1, DK2, DK12, M)
+
+                if isempty(BP2)
+                    K[j,i] = K[i,j]
+                end
+            end
+        end
+    end
+
+    return K
+end
+
+###############################################################################
+# Function: dsignature_gram_matrix
+# Description: Computes the gram matrix for two batches of time series, using
 #   the normalized discrete signature kernel. 
 # Input 
-#   BP1, BP2: two batches of time series, where each is a 1D array of arrays
-#       - each element of an array is a time series, which can be of two forms:
-#          (1) (T+1, N)-array, where columns represent the point at time t
-#          (2) (T+1)-array of objects, where each column represents the object at time t
-#       - we use an array of arrays to allow for different lengths for the time series
+#   BP1, BP2: two batches of time series
 #   M: truncation level
-#   dtype: either the type of the time series, or a kernel function
+#   dtype: type of time series
 # Output 
-#   K: signature kernel matrix
+#   K: gram matrix
 ###############################################################################
-function dsignature_kernel_matrix(BP1, BP2, M, dtype)
+function dsignature_kernel_matrix(BP1, BP2, M, dtype::Function)
 
     isgram = false
 
@@ -743,6 +860,349 @@ function dsignature_MMDu(BP1, BP2, M, dtype)
     MMD_val = MMD_val1*2/(S1*(S1-1)) + MMD_val2*2/(S2*(S2-1)) - MMD_val3*2/(S1*S2)
 
     return MMD_val
+end
+
+
+
+###############################################################################
+# Description: Diagonalizes a skew-symmetric matrix into 2x2 blocks of paired
+# eigenvalues, along with its corresponding matrix of eigenvectors. Eigenvalues 
+# are ordered from largest to smallest in magnitude.
+#
+function skew_diagonalize(A)
+    tol = 1e-10 # tolerance for sanity check at the end
+    d, ~ = size(A)
+
+    # Check skew-symmetric
+    if A != -transpose(A)
+        error("Input matrix is not skew-symmetric.")
+    end
+
+    # Transformation to take a conjugate pair of eigenvalues into a 2x2 block
+    T = [1 -im; 1 im]/sqrt(2)
+
+    # Compute eigenvalues and sort the pairs from largest to smallest
+    # Also, put 0 eigenvalues at the end.
+    F = eigen(A)
+    evals = F.values
+
+    pp = sortperm(evals,by=abs, rev=true)
+    evals = evals[pp]
+
+    zeroeig = findall(imag(evals).==0)
+    pp2 = collect(1:d)
+
+    for i = reverse(1:length(zeroeig))
+        splice!(pp2,zeroeig[i])
+        push!(pp2,zeroeig[i])
+    end
+
+    evals = evals[pp2]
+
+    # for i = 1:d
+    #     println(evals[i])
+    # end
+
+    D = Diagonal(evals)
+    Evecs = F.vectors
+    Evecs = Evecs[:,pp]
+    Evecs = Evecs[:,pp2]
+
+    # If its odd dimensional, we will definitely have a 0 eigenvalue at the end
+    if d%2==0
+        id = Matrix{Float64}(I,Int(d/2),Int(d/2))
+        TT = kron(id, T)
+    else
+        TT = zeros(Complex{Float64},d,d)
+        id = Matrix{Float64}(I,Int(floor(d/2)),Int(floor(d/2)))
+        TT[1:end-1, 1:end-1] = kron(id, T)
+        TT[end,end] = 1
+    end
+
+    V = Evecs*TT
+    V = real(inv(V)) # Matrix of eigenvectors
+    SD = real(TT'*D*TT) # Skew diagonal matrix of eigenvalues
+
+    # Sanity check
+    if maximum(abs.(V*A*V' - SD)) > tol
+        error("Something went wrong with the decomposition")
+    end
+
+    return V, SD
+end
+
+
+# Input is the kernel
+function kernel_SA(K)
+
+    T, ~ = size(K)
+
+    M = zeros(T,T)
+
+    CK = cumsum(K, dims=2)
+    M = CK[:,1:end-1]*K[2:end,:]
+    M = M - M'
+
+    # Transformation to take a conjugate pair of eigenvalues into a 2x2 block
+    TX = [1 -im; 1 im]/sqrt(2)
+
+    F = eigen(M, K)
+    evals = F.values
+
+    pp = sortperm(evals,by=abs, rev=true)
+    evals = evals[pp]
+
+    zeroeig = findall(imag(evals).==0)
+    pp2 = collect(1:T)
+
+    for i = reverse(1:length(zeroeig))
+        splice!(pp2,zeroeig[i])
+        push!(pp2,zeroeig[i])
+    end
+
+    evals = evals[pp2]
+
+    D = Diagonal(evals)
+    Evecs = F.vectors
+    Evecs = Evecs[:,pp]
+    Evecs = Evecs[:,pp2]
+
+    # If its odd dimensional, we will definitely have a 0 eigenvalue at the end
+    if T%2==0
+        id = Matrix{Float64}(I,Int(T/2),Int(T/2))
+        TT = kron(id, TX)
+    else
+        TT = zeros(Complex{Float64},T,T)
+        id = Matrix{Float64}(I,Int(floor(T/2)),Int(floor(T/2)))
+        TT[1:end-1, 1:end-1] = kron(id, TX)
+        TT[end,end] = 1
+    end
+
+    V = Evecs*TT
+    V = real(inv(V)) # Matrix of eigenvectors
+    SD = real(TT'*D*TT) # Skew diagonal matrix of eigenvalues
+
+    V1 = V[1,:]*sqrt(abs(evals[1]))
+    V2 = V[2,:]*sqrt(abs(evals[1]))
+
+    C1 = K*V1
+    C2 = K*V2
+
+    return V, SD, C1, C2
+
+end
+
+
+
+##############################################################
+
+function recursive_nystroem(X, s, kernelFunc)
+
+    # m = length(X)
+
+    # if m <= s
+    #     return Diagonal(ones(m))
+    # end
+
+    # ss_ind = findall(rand(Bernoulli(), m).==1)
+    # Xbar = X[ss_ind]
+
+    # mbar = length(ss_ind)
+
+    # Sbar = zeros(m, mbar)
+    # for i = 1:mbar
+    #     Sbar[ss_ind[i],i] = 1
+    # end
+
+    # Stilde = recursive_nystroem(Xbar, kernel, s, delta/3)
+
+    # Shat = Sbar*Stilde
+
+    sLevel = s
+    n, d = size(X)
+
+    # Start of algorithm
+    oversamp = log(sLevel)
+    k = ceil(Int,sLevel/(4*oversamp))
+    nLevels = ceil(Int,log(n/sLevel)/log(2))
+
+    # Create random permutation for successful uniform samples
+    perm = randperm(n)
+
+    # Set up sizes for recursive levels
+    lSize = zeros(Int, nLevels+1)
+    lSize[1] = n
+    for i = 2:nLevels+1
+        lSize[i] = ceil(Int,lSize[i-1]/2)
+    end
+
+    # rInd: indices of points selected at previous level of recursion
+    # at the base level, it's just a uniform sample of ~sLevel points
+    samp = 1:lSize[end]
+    rInd = perm[samp]
+    weights = ones(length(rInd))
+
+    # We need the diagonal of the whole kernel matrix, so compute upfront
+    kDiag = kernelFunc(X, 1:n, [])
+
+    # main recursion
+    for l = nLevels:-1:1
+        # Indices of current uniform sample
+        rIndCurr = perm[1:lSize[l]]
+
+        # Build sampled kernel
+        KS = kernelFunc(X, rIndCurr, rInd)
+        SKS = KS[samp, :]
+        SKSn = size(SKS,1)
+
+        # Optimal lambda for taking O(klogk) samples
+        if k >= SKSn
+            lambda = 10e-6
+        else
+            F = eigen(SKS)
+            lambda = sum(F.values[1:k])/k
+        end
+
+        # Compute and sample by lambda ridge leverage scores
+        if l != 1
+            # On intermediate levels, we independently sample each column
+            # by its leverage score. the sample size is sLevel in expectation
+            R = inv(SKS + Diagonal(lambda*weights.^(-2)))
+            # max(0,.) helps avoid numerical issues, unnecessary in theory
+            levs = min.(1, oversamp*(1/lambda)*max.(0, (kDiag[rIndCurr] - sum((KS*R).*KS,dims=2))))
+            samp = findall(rand(1, lSize[l]) .< levs)
+
+            # With very low probability, we could accidentally sample no
+            # columns. In this case, just take a fixed size uniform sample
+            if(isempty(samp))
+                levs[:] = sLevel/lSize[l]
+                samp = randperm(lSize[l])[1:sLevel]
+            end
+
+            weights = sqrt.(1 ./(levs[samp]))
+        else
+            # On the top level, we sample exactly x landmark points without replacement
+            R = inv(SKS + Diagonal(lambda*weights.^(-2)))
+            levs = min.(1, (1/lambda)*max.(0, (kDiag[rIndCurr] - sum((KS*R).*KS,dims=2))))
+            samp = sample(collect(1:n), pweights(levs), s; replace=false)
+        end
+        rInd = perm(samp)
+    end
+
+    # Build final Nystrom approximation
+    # pinv or inversion with slight regularization helps stability
+    C = kernelFunc(X, 1:n, rInd);
+    SKS = C(rInd, :)
+    W = inv(SKS + (10e-6)*I)
+
+    return C, W
+
+
+end
+
+
+
+function gaussianKernel(X, rowInd, colInd)
+    gamma = 20.
+
+    if isempty(colInd)
+        Ksub = ones(length(rowInd))
+    else
+        nsqRows = sum(X[rowInd,:].^2, dims=2)
+        nsqCols = sum(X[colInd,:].^2, dims=2)
+        Ksub = nsqRows .- (X[rowInd,:]*(2*X[colInd,:])')
+        Ksub = nsqCols' .+ Ksub
+        Ksub = exp.(-gamma*Ksub)
+    end
+    return Ksub
+
+end
+
+
+# This is just the basic nystrom approximation by uniformly sampling
+# s points
+function nystrom(X, s, kernelFunc)
+
+    if ndims(X) > 1
+        n = size(X,1)
+    else
+        n = length(X)
+    end
+
+    # sampInd = randperm(n)[1:s]
+    # sampInd = sort!(sampInd)
+
+    stepsize = floor(Int, n/s)
+    sampInd = 1:stepsize:n
+
+    kernelSubFunc = (X, rowInd, colInd) -> kernel_submatrix(X, kernelFunc, rowInd, colInd)
+
+    KS = kernelSubFunc(X, 1:n, sampInd)
+
+    SKS = kernelSubFunc(X, sampInd, sampInd)
+
+    # U = KS
+    # V = pinv(SKS)*KS'
+
+    # return U, V'
+
+    return KS *pinv(SKS)*KS'
+
+end
+
+
+function kernel_submatrix(X, kernelFunc, rowInd, colInd)
+
+    if ndims(X) > 1
+        nestedfeatures = false
+    else
+        nestedfeatures = true
+    end
+
+    nr = length(rowInd)
+    nc = length(colInd)
+
+    K = zeros(nr, nc)
+
+    rc_intersect = intersect(rowInd, colInd)
+
+    for i = 1:nr
+        for j = 1:nc
+
+            RI = rowInd[i]
+            CI = colInd[j]
+
+
+            fRI = findfirst(RI .== colInd)
+            fCI = findfirst(CI .== rowInd)
+
+
+            if !isnothing(fRI) && !isnothing(fCI) && (RI > CI)
+                continue
+            end
+
+            if nestedfeatures
+                K[i,j] = kernelFunc(X[RI], X[CI])
+            else
+                K[i,j] = kernelFunc(X[RI,:], X[CI,:])
+            end
+
+            if !isnothing(fRI) && !isnothing(fCI) && (RI < CI)
+                K[fCI,fRI] = K[i,j]
+            end
+
+        end
+    end
+
+    return K
+
+end
+
+function sGaussianKernel(x, y)
+    gamma = 20
+
+
+    return exp(-gamma*norm(x-y))
 end
 
 
